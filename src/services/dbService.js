@@ -13,7 +13,7 @@ import {
   addDoc, 
   deleteDoc
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, uploadString, getDownloadURL } from 'firebase/storage';
 
 export const getActiveMode = () => {
   return isFirebaseConfigured ? 'Firebase' : 'MockDB';
@@ -100,7 +100,13 @@ export const dbService = {
       for (let i = 0; i < filesOrUrls.length; i++) {
         const file = filesOrUrls[i];
         const storageRef = ref(storage, `damages/in_${driverId}_${Date.now()}_${i}.jpg`);
-        await uploadBytes(storageRef, file);
+        
+        if (typeof file === 'string' && file.startsWith('data:')) {
+          await uploadString(storageRef, file, 'data_url');
+        } else {
+          await uploadBytes(storageRef, file);
+        }
+        
         const downloadUrl = await getDownloadURL(storageRef);
         uploadedUrls.push(downloadUrl);
       }
@@ -153,7 +159,13 @@ export const dbService = {
       for (let i = 0; i < filesOrUrls.length; i++) {
         const file = filesOrUrls[i];
         const storageRef = ref(storage, `damages/out_${driverId}_${Date.now()}_${i}.jpg`);
-        await uploadBytes(storageRef, file);
+        
+        if (typeof file === 'string' && file.startsWith('data:')) {
+          await uploadString(storageRef, file, 'data_url');
+        } else {
+          await uploadBytes(storageRef, file);
+        }
+        
         const downloadUrl = await getDownloadURL(storageRef);
         uploadedUrls.push(downloadUrl);
       }

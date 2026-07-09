@@ -48,6 +48,11 @@ export default function DriverDashboard({ onLogout }) {
       if (current) {
         setDriverState(current);
         localStorage.setItem('driver_session', JSON.stringify(current));
+      } else {
+        // Firebase 등 실제 DB에 드라이버 세션 정보가 없는 경우 자동 로그아웃으로 무한 로딩을 탈출하게 처리
+        localStorage.removeItem('driver_session');
+        setDriver(null);
+        setDriverState(null);
       }
     });
 
@@ -84,8 +89,16 @@ export default function DriverDashboard({ onLogout }) {
       }
     };
 
+    // 기사 근무 상태에 따른 GPS 수집 주기 차등화 (대기/식사 중 비용 극적 절감)
+    let gpsIntervalMs = 15000; // 기본 (진행중): 15초
+    if (driverState.status === '대기' || driverState.status === '식사중') {
+      gpsIntervalMs = 120000; // 대기 및 식사중: 2분 (120초)으로 늦추어 트래픽 격리
+    } else if (driverState.status === '확인완료') {
+      gpsIntervalMs = 30000; // 지시 수신/확인완료 상태: 30초
+    }
+
     sendRealGPS();
-    gpsInterval = setInterval(sendRealGPS, 15000);
+    gpsInterval = setInterval(sendRealGPS, gpsIntervalMs);
 
     // 가상 GPS 시뮬레이션 동작
     if (simulationActive && driverState.status === '진행중' && driverState.currentOrder) {
