@@ -41,6 +41,10 @@ export default function AdminDashboard() {
   const [activePhotoGallery, setActivePhotoGallery] = useState(null); 
   const [galleryIndex, setGalleryIndex] = useState(0);
 
+  // Excel 일괄 등록 관련 대기 데이터 상태
+  const [pendingBulkData, setPendingBulkData] = useState(null);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
   // 실시간 구독
   useEffect(() => {
     const unsubDrivers = dbService.subscribeDrivers((data) => {
@@ -171,6 +175,114 @@ export default function AdminDashboard() {
         return 0;
       });
   }, [drivers, gridSearch, gridStatusFilter, gridSortKey]);
+
+  // Excel 파일 파싱 업로드 핸들러
+  const handleExcelUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        
+        let parsedVehicles = [];
+        let parsedDrivers = [];
+        
+        wb.SheetNames.forEach(sheetName => {
+          const worksheet = wb.Sheets[sheetName];
+          const rawJson = XLSX.utils.sheet_to_json(worksheet);
+          
+          // '차량' 또는 'vehicle' 단어가 포함된 시트 파싱
+          if (sheetName.includes('차량') || sheetName.toLowerCase().includes('vehicle')) {
+            rawJson.forEach(row => {
+              const carHo = row['호차'] || row['호수'] || row['CarHo'] || row['carHo'] || row['이름'] || row['명칭'];
+              const carNo = row['차량번호'] || row['번호'] || row['CarNo'] || row['carNo'] || row['등록번호'];
+              if (carHo && carNo) {
+                parsedVehicles.push({ carHo: String(carHo).trim(), carNo: String(carNo).trim() });
+              }
+            });
+          }
+          
+          // '드라이버', '기사' 또는 'driver' 단어가 포함된 시트 파싱
+          if (sheetName.includes('드라이버') || sheetName.includes('기사') || sheetName.toLowerCase().includes('driver')) {
+            rawJson.forEach(row => {
+              const name = row['성명'] || row['이름'] || row['Name'] || row['name'] || row['기사명'];
+              const phone = row['연락처'] || row['전화번호'] || row['Phone'] || row['phone'] || row['휴대폰'] || row['핸드폰'];
+              if (name && phone) {
+                parsedDrivers.push({ name: String(name).trim(), phone: String(phone).trim() });
+              }
+            });
+          }
+        });
+
+        // 컬럼 미매칭 시 차선책으로 전체 시트 무작위 순회 파싱 시도 (단일 시트 업로드 구제용)
+        if (parsedVehicles.length === 0 && parsedDrivers.length === 0) {
+          wb.SheetNames.forEach(sheetName => {
+            const worksheet = wb.Sheets[sheetName];
+            const rawJson = XLSX.utils.sheet_to_json(worksheet);
+            
+            rawJson.forEach(row => {
+              // 행 데이터를 훑어서 컬럼 매칭 시도
+              const carHo = row['호차'] || row['호수'] || row['CarHo'] || row['carHo'];
+              const carNo = row['차량번호'] || row['번호'] || row['CarNo'] || row['carNo'];
+              const name = row['성명'] || row['이름'] || row['Name'] || row['name'];
+              const phone = row['연락처'] || row['전화번호'] || row['Phone'] || row['phone'];
+
+              if (carHo && carNo) {
+                parsedVehicles.push({ carHo: String(carHo).trim(), carNo: String(carNo).trim() });
+              }
+              if (name && phone) {
+                parsedDrivers.push({ name: String(name).trim(), phone: String(phone).trim() });
+              }
+            });
+          });
+        }
+
+        if (parsedVehicles.length === 0 && parsedDrivers.length === 0) {
+          alert('Excel 파일에서 유효한 차량 또는 드라이버 시트/컬럼 데이터를 감지할 수 없습니다. \n(열 제목 확인 필요 - 차량: 호차, 차량번호 / 드라이버: 성명, 연락처)');
+          setPendingBulkData(null);
+        } else {
+          setPendingBulkData({ vehicles: parsedVehicles, drivers: parsedDrivers });
+        }
+      } catch (err) {
+        alert('엑셀 파일 분석 실패: ' + err.message);
+        setPendingBulkData(null);
+      }
+    };
+    reader.readAsBinaryString(file);
+    // 동일한 파일 재업로드 시도 대비 입력 값 리셋
+    e.target.value = '';
+  };
+
+  // 파싱 대기 데이터를 최종 DB로 트랜잭션 전송
+  const handleConfirmBulkUpload = async () => {
+    if (!pendingBulkData) return;
+    setIsBulkProcessing(true);
+    
+    try {
+      let vCount = 0;
+      let dCount = 0;
+      
+      if (pendingBulkData.vehicles.length > 0) {
+        const vRes = await dbService.bulkAddVehicles(pendingBulkData.vehicles);
+        if (vRes.success) vCount = vRes.count;
+      }
+      
+      if (pendingBulkData.drivers.length > 0) {
+        const dRes = await dbService.bulkAddDrivers(pendingBulkData.drivers);
+        if (dRes.success) dCount = dRes.count;
+      }
+      
+      alert(`🎉 일괄 등록에 성공하였습니다! \n- 신규 차량: ${vCount}대 등록 완료 \n- 신규 드라이버: ${dCount}명 등록 완료`);
+      setPendingBulkData(null);
+    } catch (err) {
+      alert('일괄 등록 반영 에러: ' + err.message);
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
 
   // 차량 등록 CRUD
   const handleAddVehicle = async (e) => {
@@ -640,6 +752,73 @@ export default function AdminDashboard() {
         {/* TAB 3: 차량/드라이버 등록 & 배정 매칭 */}
         {activeTab === 'management' && (
           <main style={{ flex: '1', padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* 📊 Excel 파일 일괄 등록 패널 */}
+            <div className="glass-panel" style={{ padding: '20px', border: '1px solid var(--primary)', background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.04) 0%, rgba(15, 23, 42, 0.8) 100%)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>📊</span> <span>Excel 파일 일괄 등록 (차량 & 드라이버)</span>
+                  </h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    하나의 Excel 파일에 <strong>'차량'</strong> 시트와 <strong>'드라이버'</strong> 시트를 각각 구성하여 일괄 등록할 수 있습니다. 
+                    <br />(필수 열 이름 - 차량: <code>호차</code>, <code>차량번호</code> / 드라이버: <code>성명</code>, <code>연락처</code>)
+                  </p>
+                </div>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <input 
+                    type="file" 
+                    id="excel-bulk-file" 
+                    accept=".xlsx, .xls" 
+                    onChange={handleExcelUpload} 
+                    style={{ display: 'none' }}
+                  />
+                  <label 
+                    htmlFor="excel-bulk-file" 
+                    className="btn-primary" 
+                    style={{ width: 'auto', padding: '10px 20px', cursor: 'pointer', background: 'transparent', border: '1px solid var(--primary)', color: 'var(--primary)' }}
+                  >
+                    📂 Excel 파일 선택
+                  </label>
+                </div>
+              </div>
+
+              {/* 파싱 프리뷰 영역 */}
+              {pendingBulkData && (
+                <div style={{ marginTop: '16px', padding: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                  <h4 style={{ fontSize: '14px', color: '#fff', marginBottom: '10px' }}>🔍 파싱된 데이터 요약</h4>
+                  <div style={{ display: 'flex', gap: '20px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '13px' }}>
+                      🚙 차량 데이터: <strong style={{ color: 'var(--primary)' }}>{pendingBulkData.vehicles.length}건</strong> 감지됨
+                    </div>
+                    <div style={{ fontSize: '13px' }}>
+                      👨‍✈️ 드라이버 데이터: <strong style={{ color: 'var(--primary)' }}>{pendingBulkData.drivers.length}건</strong> 감지됨
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button 
+                      className="btn-primary" 
+                      style={{ width: 'auto', padding: '8px 16px', fontSize: '13px' }}
+                      onClick={handleConfirmBulkUpload}
+                      disabled={isBulkProcessing}
+                    >
+                      {isBulkProcessing ? '일괄 등록 진행 중...' : '✔️ 최종 데이터베이스 일괄 반영'}
+                    </button>
+                    <button 
+                      className="btn-primary" 
+                      style={{ width: 'auto', padding: '8px 16px', fontSize: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                      onClick={() => setPendingBulkData(null)}
+                      disabled={isBulkProcessing}
+                    >
+                      취소
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
               
               {/* 차량 등록 폼 */}

@@ -11,7 +11,8 @@ import {
   query, 
   orderBy, 
   addDoc, 
-  deleteDoc
+  deleteDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { ref, uploadBytes, uploadString, getDownloadURL } from 'firebase/storage';
 
@@ -698,6 +699,61 @@ export const dbService = {
     } catch (e) {
       console.error(e);
       return [];
+    }
+  },
+
+  // 차량 일괄 벌크 등록 (Firestore writeBatch 사용)
+  bulkAddVehicles: async (vehiclesList) => {
+    if (!isFirebaseConfigured) {
+      return mockDatabase.bulkAddVehicles(vehiclesList);
+    }
+
+    try {
+      const batch = writeBatch(db);
+      vehiclesList.forEach(v => {
+        const formattedCarHo = v.carHo.includes('호차') ? v.carHo : `${v.carHo}호차`;
+        // Firestore 컬렉션 참조 생성 및 새 문서 레퍼런스 생성
+        const newDocRef = doc(collection(db, 'vehicles'));
+        batch.set(newDocRef, {
+          carHo: formattedCarHo,
+          carNo: v.carNo,
+          driverId: null
+        });
+      });
+      await batch.commit();
+      return { success: true, count: vehiclesList.length };
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: e.message };
+    }
+  },
+
+  // 드라이버 일괄 벌크 등록
+  bulkAddDrivers: async (driversList) => {
+    if (!isFirebaseConfigured) {
+      return mockDatabase.bulkAddDrivers(driversList);
+    }
+
+    try {
+      const batch = writeBatch(db);
+      driversList.forEach(d => {
+        const newDocRef = doc(collection(db, 'drivers'));
+        batch.set(newDocRef, {
+          name: d.name,
+          phone: d.phone,
+          vehicleId: null,
+          status: '미출근',
+          lat: 37.498,
+          lng: 127.027,
+          photos: [],
+          updatedAt: null
+        });
+      });
+      await batch.commit();
+      return { success: true, count: driversList.length };
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: e.message };
     }
   }
 };

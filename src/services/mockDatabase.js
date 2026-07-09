@@ -657,5 +657,38 @@ export const mockDatabase = {
     ctx.fillText('BODY INSPECT OK', 20, 275);
 
     return canvas.toDataURL('image/jpeg');
+  },
+
+  // 로컬 차량 일괄 추가
+  bulkAddVehicles: (vehiclesList) => {
+    const vehicles = getStoredData(KEYS.VEHICLES, DEFAULT_VEHICLES);
+    const formatted = vehiclesList.map(v => ({
+      id: `vehicle_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      carHo: v.carHo.includes('호차') ? v.carHo : `${v.carHo}호차`,
+      carNo: v.carNo,
+      driverId: null
+    }));
+    const merged = [...vehicles, ...formatted];
+    setStoredData(KEYS.VEHICLES, merged);
+    return { success: true, count: formatted.length };
+  },
+
+  // 로컬 드라이버 일괄 추가
+  bulkAddDrivers: (driversList) => {
+    const drivers = getStoredData(KEYS.DRIVERS, DEFAULT_DRIVERS);
+    const formatted = driversList.map(d => ({
+      id: `driver_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      name: d.name,
+      phone: d.phone,
+      vehicleId: null,
+      status: '미출근',
+      lat: 37.498,
+      lng: 127.027,
+      photos: [],
+      updatedAt: null
+    }));
+    const merged = [...drivers, ...formatted];
+    setStoredData(KEYS.DRIVERS, merged);
+    return { success: true, count: formatted.length };
   }
 };
